@@ -54,7 +54,7 @@ func (f *fakeIAM) ListServiceAccountKeys(_ context.Context, r *v1alpha1.ListServ
 	return f.list(r)
 }
 
-func newTestClient(t *testing.T, server *fakeIAM) *Client {
+func newTestClient(t *testing.T, server v1alpha1.IAMServiceServer) *Client {
 	t.Helper()
 
 	lis := bufconn.Listen(1024 * 1024)

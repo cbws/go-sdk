@@ -56,6 +56,9 @@ func TestFindDefaultCredentialsUsesCLIConfig(t *testing.T) {
 	if credentials.TokenSource == nil {
 		t.Error("credentials carry no token source")
 	}
+	if credentials.Kind() != KindCLI {
+		t.Errorf("Kind() = %v, want KindCLI", credentials.Kind())
+	}
 
 	// The configuration's project_name is where the CLI is switched to, not
 	// a property of the login, so it is not the credential's project.
@@ -140,6 +143,9 @@ func TestFindDefaultCredentialsPrefersTheEnvironment(t *testing.T) {
 			}
 			if len(credentials.JSON) == 0 {
 				t.Error("credentials carry no JSON, so the key was not the source used")
+			}
+			if credentials.Kind() != KindServiceAccountKey {
+				t.Errorf("Kind() = %v, want KindServiceAccountKey", credentials.Kind())
 			}
 		})
 	}
@@ -232,6 +238,9 @@ func TestFindDefaultCredentialsAsksMetadataForTheProject(t *testing.T) {
 	}
 	if asked != 0 {
 		t.Errorf("finding credentials asked for the project %d times, want it left until needed", asked)
+	}
+	if credentials.Kind() != KindMetadata {
+		t.Errorf("Kind() = %v, want KindMetadata", credentials.Kind())
 	}
 
 	name, err := credentials.ProjectName(context.Background())

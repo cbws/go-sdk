@@ -23,7 +23,34 @@ type Credentials struct {
 	TokenSource oauth2.TokenSource
 	JSON        []byte
 
+	kind        Kind
 	projectName func(context.Context) (string, error)
+}
+
+// Kind is the source credentials were found in. It tells a caller what else
+// the credentials can be used for, such as which way an ID token is minted.
+type Kind int
+
+const (
+	// KindUnknown is credentials built from a token source the caller
+	// supplied, whose origin this package cannot tell.
+	KindUnknown Kind = iota
+
+	// KindServiceAccountKey is a service account key file. JSON holds it.
+	KindServiceAccountKey
+
+	// KindCLI is the login of the CBWS CLI, which is a user rather than a
+	// service account.
+	KindCLI
+
+	// KindMetadata is the metadata endpoint of the machine the caller runs
+	// on, which mints tokens for the service account attached to it.
+	KindMetadata
+)
+
+// Kind reports the source the credentials were found in.
+func (c *Credentials) Kind() Kind {
+	return c.kind
 }
 
 // ProjectName reports the project the credentials belong to: the project
@@ -75,6 +102,7 @@ func NewFromJSONWithOptions(ctx context.Context, data []byte, scopes []string, o
 	return &Credentials{
 		TokenSource: tokenSource,
 		JSON:        data,
+		kind:        KindServiceAccountKey,
 		projectName: func(context.Context) (string, error) {
 			return credentials.ProjectName, nil
 		},
@@ -154,6 +182,7 @@ func FindDefaultCredentialsWithOptions(ctx context.Context, scopes []string, opt
 	if onCBWS() {
 		return &Credentials{
 			TokenSource: metadataTokenSource(ctx, scopes),
+			kind:        KindMetadata,
 			projectName: metadataProjectName,
 		}, nil
 	}
@@ -247,7 +276,7 @@ func (s *settings) cliCredentials(ctx context.Context, filename string, scopes [
 	}
 
 	if !cacheable {
-		return &Credentials{TokenSource: tokenSource}, nil
+		return &Credentials{TokenSource: tokenSource, kind: KindCLI}, nil
 	}
 
 	cached, err := s.cached(tokenSource, tokencache.Key{
@@ -260,7 +289,7 @@ func (s *settings) cliCredentials(ctx context.Context, filename string, scopes [
 		return nil, err
 	}
 
-	return &Credentials{TokenSource: cached}, nil
+	return &Credentials{TokenSource: cached, kind: KindCLI}, nil
 }
 
 // isFile reports whether path is something worth trying to read a
