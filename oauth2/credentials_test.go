@@ -33,11 +33,41 @@ func isolate(t *testing.T) string {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv(AccessTokenEnvVar, "")
 	t.Setenv("CLOUDBEAR_CREDENTIALS", "")
 	t.Setenv("CBWS_CREDENTIALS", "")
 	t.Setenv("CBWS_CONFIG_FILE", filepath.Join(home, ".cbws.yaml"))
 
 	return home
+}
+
+// TestFindDefaultCredentialsPrefersAnAccessToken covers a pipeline that
+// injects a token it read elsewhere. The token wins over every other source:
+// CBWS_CREDENTIALS names a file that is not there, so reading it would fail
+// the lookup.
+func TestFindDefaultCredentialsPrefersAnAccessToken(t *testing.T) {
+	isolate(t)
+	t.Setenv(AccessTokenEnvVar, "at-env")
+	t.Setenv("CBWS_CREDENTIALS", "/nonexistent/credentials.json")
+
+	credentials, err := FindDefaultCredentials(context.Background(), "cbws.compute")
+	if err != nil {
+		t.Fatalf("FindDefaultCredentials: %+v", err)
+	}
+
+	token, err := credentials.TokenSource.Token()
+	if err != nil {
+		t.Fatalf("Token: %+v", err)
+	}
+	if token.AccessToken != "at-env" || token.Type() != "Bearer" {
+		t.Errorf("token = %q (%s), want the variable's token as a bearer token", token.AccessToken, token.Type())
+	}
+
+	// A bare token names no project.
+	name, err := credentials.ProjectName(context.Background())
+	if err != nil || name != "" {
+		t.Errorf("ProjectName() = %q, %v, want no project for a bare token", name, err)
+	}
 }
 
 // TestFindDefaultCredentialsUsesCLIConfig covers the path a developer's own

@@ -109,6 +109,11 @@ func NewFromJSONWithOptions(ctx context.Context, data []byte, scopes []string, o
 	}, nil
 }
 
+// AccessTokenEnvVar names the environment variable that holds an access token
+// obtained elsewhere. When it is set, FindDefaultCredentials uses the token
+// as it is, ahead of every other source.
+const AccessTokenEnvVar = "CBWS_ACCESS_TOKEN"
+
 func FindDefaultCredentials(ctx context.Context, scopes ...string) (*Credentials, error) {
 	return FindDefaultCredentialsWithOptions(ctx, scopes)
 }
@@ -126,7 +131,20 @@ func FindDefaultCredentials(ctx context.Context, scopes ...string) (*Credentials
 func FindDefaultCredentialsWithOptions(ctx context.Context, scopes []string, options ...Option) (*Credentials, error) {
 	resolved := newSettings(options)
 
-	// First, try the environment variable.
+	// First, try a bare access token, the variable the CBWS CLI reads too. It
+	// is for a caller that obtains its token elsewhere, such as from Vault, so
+	// there is nothing to refresh it with and the scopes do not apply to it.
+	// It is not cached either: the variable is the token's only store.
+	if accessToken := os.Getenv(AccessTokenEnvVar); accessToken != "" {
+		return &Credentials{
+			TokenSource: oauth2.StaticTokenSource(&oauth2.Token{
+				AccessToken: accessToken,
+				TokenType:   "Bearer",
+			}),
+		}, nil
+	}
+
+	// Second, try the environment variable.
 	const envVar = "CBWS_CREDENTIALS"
 	if filename := os.Getenv(envVar); filename != "" {
 		creds, err := readCredentialsFile(ctx, filename, scopes, options)
@@ -136,7 +154,7 @@ func FindDefaultCredentialsWithOptions(ctx context.Context, scopes []string, opt
 		return creds, nil
 	}
 
-	// Second, try the legacy spelling of the environment variable, which is
+	// Third, try the legacy spelling of the environment variable, which is
 	// still read for setups that set only it.
 	const legacyEnvVar = "CLOUDBEAR_CREDENTIALS"
 	if filename := os.Getenv(legacyEnvVar); filename != "" {
@@ -147,7 +165,7 @@ func FindDefaultCredentialsWithOptions(ctx context.Context, scopes []string, opt
 		return creds, nil
 	}
 
-	// Third, try a well-known file.
+	// Fourth, try a well-known file.
 	filename := wellKnownFile()
 	if creds, err := readCredentialsFile(ctx, filename, scopes, options); err == nil {
 		return creds, nil
@@ -155,7 +173,7 @@ func FindDefaultCredentialsWithOptions(ctx context.Context, scopes []string, opt
 		return nil, fmt.Errorf("cbws: error getting credentials using well-known file (%v): %v", filename, err)
 	}
 
-	// Fourth, try the CBWS CLI config. A file that is not there and a file
+	// Fifth, try the CBWS CLI config. A file that is not there and a file
 	// holding no token both mean the CLI is not logged in, which is a
 	// reason to try the next source rather than to fail: a workload with a
 	// metadata endpoint routinely has a configuration file for its project
@@ -170,7 +188,7 @@ func FindDefaultCredentialsWithOptions(ctx context.Context, scopes []string, opt
 		}
 	}
 
-	// Fifth, try the CBWS metadata token endpoint.
+	// Sixth, try the CBWS metadata token endpoint.
 	//
 	// Deliberately not cached. The endpoint is the same link-local address
 	// on every machine and the service discloses no principal, so nothing
