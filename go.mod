@@ -10,7 +10,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
-	go.cbws.cloud/api v0.101.0
+	go.cbws.cloud/api v0.121.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7
 	google.golang.org/grpc v1.85.0

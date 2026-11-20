@@ -25,8 +25,8 @@ github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0t
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-go.cbws.cloud/api v0.101.0 h1:8TyxjcTjZ48UuMA2VfLYCJuOyMbLfWgnTl6CK9kIQiQ=
-go.cbws.cloud/api v0.101.0/go.mod h1:0v0tOYiwIK5vWNOLKwyOsD2noTJJKpsySzllOAMUlqc=
+go.cbws.cloud/api v0.121.0 h1:/ZC7VHWqbaUG4R8aaZORhLQrxkrWssxoSys6lSPMpKM=
+go.cbws.cloud/api v0.121.0/go.mod h1:VZssstYW+/VnlSG9HV0uEaDvvYgaGnbsXu046nfxd+o=
 golang.org/x/net v0.61.0 h1:RR+6j/BTBCrggOLugxa+66R8FvoN6MHlzDlZIbN9YFw=
 golang.org/x/net v0.61.0/go.mod h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI=
 golang.org/x/oauth2 v0.36.0 h1:peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=

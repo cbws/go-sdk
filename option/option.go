@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 type DialSettings struct {
@@ -38,6 +39,10 @@ type DialSettings struct {
 	// source that cannot identify one itself. See
 	// oauth2.WithCredentialGeneration.
 	CredentialGeneration string
+
+	// QuotaProject is the project the client's calls are attributed to when
+	// a call names no project itself. See WithQuotaProject.
+	QuotaProject string
 }
 
 // credentialOptions turns the caching settings into the options the oauth2
@@ -295,4 +300,43 @@ type withCredentialGeneration string
 
 func (w withCredentialGeneration) Apply(o *DialSettings) {
 	o.CredentialGeneration = string(w)
+}
+
+// QuotaProjectHeader is the gRPC metadata key that names the project a call
+// is attributed to. Over HTTP it is the header X-CBWS-Project-ID.
+const QuotaProjectHeader = "x-cbws-project-id"
+
+// QuotaProjectEnvVar names the environment variable holding the project for
+// a client built without WithQuotaProject.
+const QuotaProjectEnvVar = "CBWS_PROJECT_ID"
+
+// WithQuotaProject returns a ClientOption that attributes the client's calls
+// to project. A service uses it for a call that names no project itself, such
+// as a list of machine types in a zone, and ignores it for a call on a
+// resource in a project, which belongs to that resource's project. The
+// caller needs permission to use the service in project, or the service
+// refuses the call.
+//
+// Without it the client takes the project from QuotaProjectEnvVar, and
+// otherwise from the metadata server when its credentials come from there.
+// A client that finds no project sends none. QuotaProjectContext overrides
+// the project for one call.
+func WithQuotaProject(project string) ClientOption {
+	return withQuotaProject(project)
+}
+
+type withQuotaProject string
+
+func (w withQuotaProject) Apply(o *DialSettings) {
+	o.QuotaProject = string(w)
+}
+
+// QuotaProjectContext returns ctx with project as the project of the calls
+// made on it, in place of the client's own.
+func QuotaProjectContext(ctx context.Context, project string) context.Context {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	md = md.Copy()
+	md.Set(QuotaProjectHeader, project)
+
+	return metadata.NewOutgoingContext(ctx, md)
 }

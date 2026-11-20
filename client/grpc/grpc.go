@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"os"
 
 	"go.cbws.cloud/sdk/internal/perrpc"
 	"go.cbws.cloud/sdk/internal/useragent"
@@ -17,24 +18,40 @@ var apiClient = useragent.APIClient("grpc/" + grpc.Version)
 
 type GRPCClient struct {
 	client *grpc.ClientConn
+
+	// quotaProject finds the project the client's calls are attributed to.
+	// It returns "" when there is none. Nil means the same.
+	quotaProject func(context.Context) string
 }
 
 func (g *GRPCClient) Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...grpc.CallOption) error {
-	return g.client.Invoke(withAPIClient(ctx), method, args, reply, opts...)
+	return g.client.Invoke(g.withHeaders(ctx), method, args, reply, opts...)
 }
 
 func (g *GRPCClient) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	return g.client.NewStream(withAPIClient(ctx), desc, method, opts...)
+	return g.client.NewStream(g.withHeaders(ctx), desc, method, opts...)
 }
 
-// withAPIClient sets the SDK's identification header on the outgoing call,
-// replacing any value the caller put in the context. It is set per call
-// rather than at dial time so that it is also sent over a connection passed
-// in with option.WithGRPCConn.
-func withAPIClient(ctx context.Context) context.Context {
+// withHeaders sets the headers the SDK sends on every outgoing call. They are
+// set per call rather than at dial time so that they are also sent over a
+// connection passed in with option.WithGRPCConn.
+//
+// The SDK's identification replaces any value the caller put in the context.
+// The quota project is the other way round: a project the caller put in the
+// context, with option.QuotaProjectContext, wins over the client's own. It is
+// sent on every call rather than only on calls that name no project, because
+// the service ignores it for a call that does, and a list of such calls kept
+// here would miss every call a service adds later.
+func (g *GRPCClient) withHeaders(ctx context.Context) context.Context {
 	md, _ := metadata.FromOutgoingContext(ctx)
 	md = md.Copy()
 	md.Set(useragent.APIClientHeader, apiClient)
+
+	if len(md.Get(option.QuotaProjectHeader)) == 0 && g.quotaProject != nil {
+		if project := g.quotaProject(ctx); project != "" {
+			md.Set(option.QuotaProjectHeader, project)
+		}
+	}
 
 	return metadata.NewOutgoingContext(ctx, md)
 }
@@ -60,15 +77,16 @@ func New(ctx context.Context, opts ...option.ClientOption) (*GRPCClient, error) 
 		return nil, err
 	}
 
+	var credentials *creds.Credentials
 	if !o.NoAuth {
-		creds, err := clientCredentials(ctx, o)
+		credentials, err = clientCredentials(ctx, o)
 		if err != nil {
 			return nil, err
 		}
-		if creds != nil {
+		if credentials != nil {
 			o.GRPCDialOpts = append(
 				o.GRPCDialOpts,
-				grpc.WithPerRPCCredentials(perrpc.New(creds.TokenSource, true)),
+				grpc.WithPerRPCCredentials(perrpc.New(credentials.TokenSource, true)),
 				grpc.WithTransportCredentials(transportCredentials(opts)),
 			)
 		}
@@ -83,8 +101,38 @@ func New(ctx context.Context, opts ...option.ClientOption) (*GRPCClient, error) 
 	}
 
 	return &GRPCClient{
-		client: o.GRPCConn,
+		client:       o.GRPCConn,
+		quotaProject: quotaProject(o, credentials),
 	}, nil
+}
+
+// quotaProject returns how a client finds the project of its calls: the
+// project it was built with, then the one in option.QuotaProjectEnvVar, then
+// the metadata server's project when the credentials come from there. The
+// metadata server is asked on the call's context, and a failure sends no
+// project rather than failing the call. Credentials from anywhere else name
+// no project the caller chose for its calls, so they give none.
+func quotaProject(o *option.DialSettings, credentials *creds.Credentials) func(context.Context) string {
+	project := o.QuotaProject
+	if project == "" {
+		project = os.Getenv(option.QuotaProjectEnvVar)
+	}
+	if project != "" {
+		return func(context.Context) string { return project }
+	}
+
+	if credentials == nil || credentials.Kind() != creds.KindMetadata {
+		return nil
+	}
+
+	return func(ctx context.Context) string {
+		project, err := credentials.ProjectName(ctx)
+		if err != nil {
+			return ""
+		}
+
+		return project
+	}
 }
 
 // clientCredentials builds the client's credentials on a context that keeps
