@@ -17,7 +17,7 @@ The SDK checks for credentials in the following order:
     export CBWS_CREDENTIALS=/etc/cbws/credentials.json
     ```
 
-    The file it points at holds the service account key as JSON, in the same format as the well-known file described below.
+    The file it points at holds the service account key as JSON, in the same format as the well-known file described below. It can also hold an external account configuration, which the [External Accounts](#external-accounts) section describes.
 
     **In CI/CD**, use whatever your runner offers for file-backed secrets rather than pasting the key into a plain variable. In GitLab CI, set the variable's type to **File**: GitLab then writes the value to a temporary file and sets `CBWS_CREDENTIALS` to that path. A variable of type *Variable* holding the JSON will not work.
 
@@ -56,6 +56,70 @@ export CBWS_TOKEN_URL=http://accounts-hydra-public.core-accounts-hydra.svc.clust
 ```
 
 Only the address changes. The signed assertion is still addressed to the public token URL, and the token that comes back is issued by `https://accounts.cbws.cloud`, so a token obtained either way is the same. The variable applies to service account keys only: CLI logins and the metadata service keep their own endpoints. A program that calls `service_account.SetTokenURL` overrides it.
+
+### External Accounts
+
+A workload that runs outside CBWS can get CBWS tokens without a service account key. The workload uses a token from its own platform, the subject token. Examples are a GitLab CI ID token and a projected Kubernetes service account token.
+
+The SDK gets a token in two steps:
+
+1. The SDK sends the subject token to CBWS STS at `https://sts.cbws.cloud/v1alpha1/token`. A workload identity pool provider verifies it. STS returns a token that is valid for 10 minutes. Only IAM accepts this token.
+2. When the configuration names a service account in `service_account_impersonation`, the SDK sends the STS token to IAM. IAM returns an access token for that service account. The workload needs permission to create tokens for that account.
+
+The SDK reads the subject token again for each exchange, because CI tokens and projected tokens rotate. The SDK does not log the subject token or the tokens that it gets.
+
+Put the configuration in a file and set `CBWS_CREDENTIALS` to its path:
+
+```json
+{
+  "type": "external_account",
+  "audience": "projects/my-project/workloadIdentityPools/ci/providers/gitlab",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "service_account_impersonation": "projects/my-project/serviceAccounts/deploy@my-project.iam-sa.cbws.xyz",
+  "credential_source": {
+    "file": "/builds/.cbws-id-token"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `type` | Always `external_account`. |
+| `audience` | The provider that verifies the subject token, as `projects/{project}/workloadIdentityPools/{pool}/providers/{provider}`. |
+| `subject_token_type` | `urn:ietf:params:oauth:token-type:jwt` or `urn:ietf:params:oauth:token-type:id_token`. |
+| `token_url` | Optional. The STS endpoint. The default is `https://sts.cbws.cloud/v1alpha1/token`. |
+| `service_account_impersonation` | Optional. The service account to get a token for, as `projects/{project}/serviceAccounts/{email}`. |
+| `iam_endpoint` | Optional. The gRPC endpoint of IAM. The SDK always connects with TLS. The default is `dns:///iam.cbws.cloud:443`. |
+| `credential_source` | Where the SDK reads the subject token. Set one of `file`, `url` or `executable`. |
+
+The `credential_source` can be one of these:
+
+- `{"file": "/path"}`: the SDK reads the token from a file.
+- `{"url": "https://...", "headers": {"Name": "value"}}`: the SDK gets the token with a GET request.
+- `{"executable": {"command": "/path/to/command arg", "timeout_millis": 30000}}`: the SDK runs the command and reads the token from its standard output. The SDK does not use a shell. The timeout is from 5 to 120 seconds, and the default is 30 seconds. The SDK runs a command only when `CBWS_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1` is set, because a different person can control the configuration file through `CBWS_CREDENTIALS`.
+
+Each source can have a `format`. With `{"type": "text"}`, which is the default, all of the response is the token. With `{"type": "json", "subject_token_field_name": "value"}`, the token is the string in that field of a JSON object.
+
+A program can also supply the subject token in code. Set `externalaccount.Config.SubjectTokenSupplier` and call `externalaccount.NewTokenSource`.
+
+To call an IAM whose certificate no public root signs, such as a stand-in in a test or a lab, set `externalaccount.Config.IAMTLSConfig` to a `tls.Config` that trusts it. The SDK always connects to IAM with TLS.
+
+**In GitLab CI**, request an ID token for the job and write it to the file that the configuration names:
+
+```yaml
+deploy:
+  id_tokens:
+    CBWS_ID_TOKEN:
+      aud: https://sts.cbws.cloud
+  variables:
+    CBWS_CREDENTIALS: $CI_PROJECT_DIR/.cbws/external-account.json
+  before_script:
+    - echo "$CBWS_ID_TOKEN" > /builds/.cbws-id-token
+```
+
+Set `aud` to the audience that the provider accepts.
+
+**Token cache:** With `oauth2.WithTokenCache`, the SDK keeps tokens under the token URL, the provider and the service account. The key does not contain information from the subject token. Thus two workloads that use the same provider and the same service account share a cache entry. If these workloads use one cache, give each one a different `oauth2.WithCredentialGeneration` value, for example the CI job ID.
 
 ### User-Managed vs. Platform-Managed Service Account Keys: Security Considerations
 

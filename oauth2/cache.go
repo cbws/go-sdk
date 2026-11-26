@@ -56,6 +56,12 @@ func WithTokenCache(cache tokencache.Cache) Option {
 //
 // Credentials that identify themselves, such as a service account key, do
 // not need this and ignore it.
+//
+// An external account configuration does not identify its workload either:
+// the subject token does, and that is a credential this package keeps out
+// of cache keys. Its tokens are cached under the provider and the target
+// account, and a generation, where one is given, separates workloads that
+// share both, such as the jobs of several projects on one CI runner.
 func WithCredentialGeneration(generation string) Option {
 	return func(s *settings) {
 		s.generation = generation

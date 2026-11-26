@@ -1,6 +1,7 @@
 package oauth2
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 
 	metadata "go.cbws.cloud/sdk/cbws/metadata/v1alpha1"
 	"go.cbws.cloud/sdk/oauth2/cli"
+	"go.cbws.cloud/sdk/oauth2/externalaccount"
 	metadata2 "go.cbws.cloud/sdk/oauth2/metadata"
 	service_account "go.cbws.cloud/sdk/oauth2/service-account"
 	"go.cbws.cloud/sdk/oauth2/tokencache"
@@ -46,6 +48,10 @@ const (
 	// KindMetadata is the metadata endpoint of the machine the caller runs
 	// on, which mints tokens for the service account attached to it.
 	KindMetadata
+
+	// KindExternalAccount is an external account configuration, which
+	// exchanges a token from outside CBWS through STS. JSON holds it.
+	KindExternalAccount
 )
 
 // Kind reports the source the credentials were found in.
@@ -54,8 +60,9 @@ func (c *Credentials) Kind() Kind {
 }
 
 // ProjectName reports the project the credentials belong to: the project
-// named in a service account key, or the project of the machine whose
-// metadata endpoint mints the tokens. Credentials that are not bound to a
+// named in a service account key, the project of the machine whose
+// metadata endpoint mints the tokens, or the project an external account
+// acts in as externalaccount.Config.ProjectName reports it. Credentials that are not bound to a
 // project, such as a user's CLI login, report an empty name and no error.
 //
 // It is a method rather than a field because the metadata endpoint has to be
@@ -74,7 +81,31 @@ func NewFromJSON(ctx context.Context, data []byte, scopes []string) (*Credential
 
 // NewFromJSONWithOptions is NewFromJSON with the options a caller may want
 // applied to the resulting source, such as WithTokenCache.
+//
+// The type field of data selects the kind of credentials: a service account
+// key is "service_account" or has no type, and an external account
+// configuration is "external_account".
 func NewFromJSONWithOptions(ctx context.Context, data []byte, scopes []string, options ...Option) (*Credentials, error) {
+	var header struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return nil, fmt.Errorf("could not parse credentials: %+v", err)
+	}
+
+	switch header.Type {
+	case "", service_account.KeyType:
+		return newServiceAccountCredentials(ctx, data, scopes, options)
+
+	case externalaccount.ConfigType:
+		return newExternalAccountCredentials(ctx, data, scopes, options)
+
+	default:
+		return nil, fmt.Errorf("credentials have type %q, expected %q or %q", header.Type, service_account.KeyType, externalaccount.ConfigType)
+	}
+}
+
+func newServiceAccountCredentials(ctx context.Context, data []byte, scopes []string, options []Option) (*Credentials, error) {
 	credentials := service_account.Credentials{}
 
 	err := json.Unmarshal(data, &credentials)
@@ -105,6 +136,47 @@ func NewFromJSONWithOptions(ctx context.Context, data []byte, scopes []string, o
 		kind:        KindServiceAccountKey,
 		projectName: func(context.Context) (string, error) {
 			return credentials.ProjectName, nil
+		},
+	}, nil
+}
+
+func newExternalAccountCredentials(ctx context.Context, data []byte, scopes []string, options []Option) (*Credentials, error) {
+	var conf externalaccount.Config
+	if err := json.Unmarshal(data, &conf); err != nil {
+		return nil, fmt.Errorf("could not parse credentials: %+v", err)
+	}
+	conf.Scopes = scopes
+
+	tokenSource, err := externalaccount.NewTokenSource(ctx, conf)
+	if err != nil {
+		return nil, err
+	}
+
+	// The key names the provider the subject token is verified by and the
+	// account it is exchanged for. Nothing is taken from the subject token,
+	// which is a credential and is read only at exchange time. So two
+	// workloads that share a provider, a target account and a cache share
+	// tokens too, and an application that keeps such workloads on one
+	// cache separates them with WithCredentialGeneration.
+	resolved := newSettings(options)
+	tokenSource, err = resolved.cached(tokenSource, tokencache.Key{
+		Issuer:      cmp.Or(conf.TokenURL, externalaccount.DefaultTokenURL),
+		Subject:     conf.Audience,
+		Scopes:      scopes,
+		Audience:    conf.Audience,
+		Impersonate: conf.ServiceAccountImpersonation,
+		Generation:  resolved.generation,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Credentials{
+		TokenSource: tokenSource,
+		JSON:        data,
+		kind:        KindExternalAccount,
+		projectName: func(context.Context) (string, error) {
+			return conf.ProjectName(), nil
 		},
 	}, nil
 }
