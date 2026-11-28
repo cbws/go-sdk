@@ -119,6 +119,24 @@ deploy:
 
 Set `aud` to the audience that the provider accepts.
 
+**In GitHub Actions**, give the job `id-token: write` and let the SDK fetch the ID token from the runner's token endpoint. The `url` source sends the headers with each request, so the job writes no token to disk:
+
+```json
+{
+  "type": "external_account",
+  "audience": "projects/my-project/workloadIdentityPools/ci/providers/github",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "service_account_impersonation": "projects/my-project/serviceAccounts/deploy@my-project.iam-sa.cbws.xyz",
+  "credential_source": {
+    "url": "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://sts.cbws.cloud",
+    "headers": {"Authorization": "Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"},
+    "format": {"type": "json", "subject_token_field_name": "value"}
+  }
+}
+```
+
+The two variables are set only in a job's shell, so write the file in a step that expands them. The workflow of this repository, `.github/workflows/go.yml`, is an example.
+
 **Token cache:** With `oauth2.WithTokenCache`, the SDK keeps tokens under the token URL, the provider and the service account. The key does not contain information from the subject token. Thus two workloads that use the same provider and the same service account share a cache entry. If these workloads use one cache, give each one a different `oauth2.WithCredentialGeneration` value, for example the CI job ID.
 
 ### User-Managed vs. Platform-Managed Service Account Keys: Security Considerations
